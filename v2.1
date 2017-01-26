@@ -1,0 +1,56 @@
+#####################################################################
+######  Sorts data from ArcMap tables based on UTM coordinates ######
+#####################################################################
+
+rm(list=ls(all=T))
+
+setwd("E:/Kati/Lox/LoxMods") #/Volumes/IKH/Kati/Lox/LoxMods
+data <- read.csv("WCA_Model_Data.csv")
+
+## Check for necessary packages ##
+requiredPackages <- c('dplyr')  #This is the list of required packages
+is.installed <- function(mypkg) is.element(mypkg, installed.packages()[,1]) #Checks if all required packages are installed
+
+# Install packages if necessary
+if(any(is.installed(requiredPackages)!= TRUE)){
+  install.packages(requiredPackages[is.installed(requiredPackages) == FALSE])
+}
+# Load libraries
+library('dplyr')
+  
+rows <- (max(data$Yutm) - min(data$Yutm))/400 + 1
+cols <- (max(data$Xutm) - min(data$Xutm))/400 + 1
+
+#This name doesn't mean anything, but stay consistent if you change it
+name <- matrix(nrow = rows, ncol = cols)
+
+col <- 1
+         
+#Remember to rename the file at the end of the script#
+#Keep the 'a$Yutm' (e.g. if statement line 26) for the sorting, but change the cbind statements depending on the column being sorted#
+
+for (x in seq(min(data$Xutm), max(data$Xutm), 400)) {
+    
+    a <- subset(data, Xutm == x)
+    a <- arrange(a, Xutm, -Yutm)
+    
+    if ((max(data$Yutm) - a$Yutm[1]) == 0) { 
+        name[,col] <- rbind(cbind(a$elev_ft_NG), cbind(matrix(nrow = (rows - length(a$elev_ft_NG)), ncol = 1))) 
+    } else {
+        b <- ((max(data$Yutm) - a$Yutm[1])/400)
+        name[,col] <- rbind(cbind(matrix(nrow = b, ncol = 1)), cbind(a$elev_ft_NG), cbind(matrix(nrow = (rows - length(a$elev_ft_NG) - b), ncol = 1)))
+    }
+    
+    for (t in 1:rows) {
+        if (is.na(name[t,col] == T)) {
+            name[t,col] <- ""
+        }
+    }
+    
+    col <- col + 1
+}
+
+
+write.table(name, file = paste("sorted_data-elev.csv", sep = ""))
+
+
