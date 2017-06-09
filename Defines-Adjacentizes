@@ -1,0 +1,258 @@
+
+# Clear all variables before new model run #
+rm(list=ls(all=TRUE))
+tick <- Sys.time()
+
+## Check for necessary packages and install if necessary ##
+requiredPackages <- c('akima')  #This is the list of required packages
+is.installed <- function(mypkg) is.element(mypkg, installed.packages()[,1]) #Checks if all required packages are installed
+if(any(is.installed(requiredPackages)!= TRUE)){
+  install.packages(requiredPackages[is.installed(requiredPackages) == FALSE])
+}
+
+library('akima')
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Lox.data <- read.csv("WCA_Model_Data.csv")  # the attributes of each grid cell
+
+grid.size <- 400 # grid spacing [m]
+scalar <- 0.5 # 0.125, 0.25, 0.5, 1, 2, 4, 8
+
+if (scalar >= 6) {
+  scalar <- 8
+} else if (scalar < 6 && scalar >= 3) {
+  scalar <- 4
+} else if (scalar < 3 && scalar >= 1.5) {
+  scalar <- 2
+} else if (scalar < 1.5 && scalar >= 0.75) {
+  scalar <- 1
+} else if (scalar < 0.75 && scalar >= 0.375) {
+  scalar <- 0.5
+} else if (scalar < 0.375 && scalar >= 0.1875) {
+  scalar <- 0.25
+} else
+  scalar <- 0.125
+
+
+if (scalar < 1) {
+  
+  temp.mat <- matrix(nr = nrow(Lox.data)*(scalar^-2), nc = 2)
+  
+  for (f in 1:nrow(Lox.data)) {
+    
+    c <- c((-0.5/scalar):(0.5/scalar))
+    c <- c[-ceiling(length(c)/2)]
+    click <- 0
+    
+    for (iy in c) {
+      
+      y <- Lox.data$Yutm[f] + 0.5*scalar*grid.size*iy
+      
+      for (ix in c) {
+        
+        x <- Lox.data$Xutm[f] + 0.5*scalar*grid.size*ix
+        
+        click <- click + 1
+        
+        temp.mat[4*(f - 1) + click, 1] <- y
+        temp.mat[4*(f - 1) + click, 2] <- x
+        
+      }
+      
+    }
+    
+  }
+  
+  x.old <- Lox.data$Xutm
+  y.old <- Lox.data$Yutm
+  z.old <- Lox.data$elev_ft_NG
+  x.new <- unique(temp.mat[,2])
+  y.new <- unique(temp.mat[,1])
+  
+  skim <- interp(x.old, y.old, z.old, x.new, y.new, linear = F, extrap = T)
+  surf <- interp2xyz(skim)
+  
+  int.mat <- matrix(nrow = nrow(temp.mat), ncol = 3)
+  
+  for (m in 1:nrow(temp.mat)) {
+    
+    for (n in 1:nrow(surf)) {
+      
+      if (temp.mat[m, 1] == surf[n, 2] && temp.mat[m, 2] == surf[n, 1]) {
+        
+        int.mat[m, 1] <- surf[n, 2] # y
+        int.mat[m, 2] <- surf[n, 1] # x
+        int.mat[m, 3] <- surf[n, 3] # z
+        
+      }
+      
+    }
+    
+  }
+  
+  xmen <- min(int.mat[,2]); xmax <- max(int.mat[,2])
+  ymin <- min(int.mat[,1]); ymax <- max(int.mat[,1])
+  
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
+  new.mat <- matrix(nrow = nrow(int.mat), ncol = 4)
+  notch <- 1
+  
+  for (y in seq(ymax, ymin, -grid.size*scalar)) {
+    
+    for (x in seq(xmen, xmax, grid.size*scalar)) {
+      
+      for (n in 1:nrow(int.mat)) {
+        
+        if (int.mat[n, 1] == y && int.mat[n, 2] == x) {
+          
+          new.mat[notch, 1] <- notch
+          new.mat[notch, 2] <- int.mat[n, 1]
+          new.mat[notch, 3] <- int.mat[n, 2]
+          new.mat[notch, 4] <- int.mat[n, 3]
+          notch <- notch + 1
+          
+        }
+        
+      }
+      
+    }
+    
+  }
+  
+  colnames(new.mat) <- heads
+  
+}
+
+
+if (scalar > 1) {
+  
+  xmen <- min(Lox.data$Xutm); xmax <- max(Lox.data$Xutm)
+  ymin <- min(Lox.data$Yutm); ymax <- max(Lox.data$Yutm)
+  temp.mat <- mat.or.vec(nr = nrow(Lox.data)/2, nc = scalar^2 + 2) 
+  r.index <- 1
+  c.index <- 1
+      
+  for (y in seq(ymax, ymin, -grid.size*scalar)) { 
+  
+    for (x in seq(xmen, xmax, grid.size*scalar)) { 
+      
+      for (r in 1:nrow(Lox.data)) { 
+        
+        if (Lox.data$Yutm[r] %in% ((y - grid.size*(scalar - 1)):y) && 
+            Lox.data$Xutm[r] %in% (x:(x + grid.size*(scalar - 1)))) {
+          
+          temp.mat[r.index, c.index] <- Lox.data$GridNo[r]
+          
+          if (temp.mat[r.index, (scalar^2 + 1)] == 0) {
+            temp.mat[r.index, (scalar^2 + 1)] <- mean((y - grid.size*(scalar - 1)), y)
+          }
+          if (temp.mat[r.index, (scalar^2 + 2)] == 0) {
+            temp.mat[r.index, (scalar^2 + 2)] <- mean(x, (x + grid.size*(scalar - 1)))
+          }
+          
+          c.index <- c.index + 1
+
+        } # for this potential grid cell
+        
+      } # check every Lox data point to see if it fits
+      
+      r.index <- r.index + 1; c.index <- 1
+      
+    } # run through grid cells from W to E
+    
+  } # run through grid cells from N to S
+    
+  j <- 1
+  rmv <- NULL
+  
+  for (i in 1:nrow(temp.mat)) {
+    
+    if (mean(temp.mat[i,]) == 0) {
+      
+      rmv[j] <- i
+      j <- j + 1
+      
+    }
+    
+  }
+  
+  for (i in 1:length(rmv)) {
+    
+    temp.mat <- temp.mat[-(rmv[i]-i+1),]
+    
+  }
+  
+  temp.mat[temp.mat == 0] <- NA
+  
+  ycol <- temp.mat[,(scalar^2 + 1)]
+  xcol <- temp.mat[,(scalar^2 + 2)]
+  temp.mat <- temp.mat[,-((ncol(temp.mat)-1):ncol(temp.mat))]
+  
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
+  new.mat <- matrix(nrow = nrow(temp.mat), ncol = 4)
+  
+  for (b in 1:nrow(temp.mat)) {
+    
+    new.mat[b, 1] <- b
+    new.mat[b, 2] <- ycol[b]
+    new.mat[b, 3] <- xcol[b]
+    new.mat[b, 4] <- mean(Lox.data$elev_ft_NG[temp.mat[b,]], na.rm = T)
+    
+  }
+  
+  colnames(new.mat) <- heads
+  
+} # if we are aggregating the Lox data points, i.e. scalar > 1
+
+
+if (scalar == 1) { # will have to change this 'if' statement, or remove it, so that adjacency is calculated no matter what
+  
+  new.mat <- Lox.data[,1:4]
+
+} 
+
+write.table(new.mat, file = paste("NEW_DATA_MATRIX_NAME", ".csv", sep = ""),
+  sep = ",", row.names = F, col.names = T)
+
+adj <- matrix(nrow = 8, ncol = nrow(new.mat))
+
+for (g in 1:nrow(new.mat)) {
+  
+  ad <- matrix(nrow = 8, ncol = 1)
+  
+  for (a in 1:nrow(new.mat)) {
+    
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] + grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g] + grid.size*scalar)) {
+      ad[1] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g]) && (new.mat$Xutm[a] == new.mat$Xutm[g] + grid.size*scalar)) {
+      ad[2] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] - grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g] + grid.size*scalar)) {
+      ad[3] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] - grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g])) {
+      ad[4] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] - grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g] - grid.size*scalar)) {
+      ad[5] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g]) && (new.mat$Xutm[a] == new.mat$Xutm[g] - grid.size*scalar)) {
+      ad[6] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] + grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g] - grid.size*scalar)) {
+      ad[7] <- a
+    }
+    if ((new.mat$Yutm[a] == new.mat$Yutm[g] + grid.size*scalar) && (new.mat$Xutm[a] == new.mat$Xutm[g])) {
+      ad[8] <- a
+    }
+  }
+  adj[,g] <- cbind(ad)
+}
+
+write.table(adj, file = paste("NEW_ADJACENCY_MATRIX_NAME", ".csv", sep = ""),
+  sep = ",", row.names = F, col.names = T)
+
+tock <- Sys.time()
+runtime <- tock - tick
+print(runtime)
