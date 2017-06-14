@@ -19,7 +19,7 @@ library('akima'); library('dplyr')
 Lox.data <- read.csv("WCA_Model_Data.csv")  # the attributes of each grid cell
 
 grid.size <- 400 # grid spacing [m]
-scalar <- 0.25 # 0.125, 0.25, 0.5, 1, 2, 4, 8
+scalar <- 0.125 # 0.125, 0.25, 0.5, 1, 2, 4, 8
 
 if (scalar >= 6) {
  scalar <- 8
@@ -46,7 +46,7 @@ if (scalar < 1) {
     c[(length(c) - i + 1)] <- -c[i]
   }
   
-  for (f in 1:nrow(Lox.data)) {
+  for (f in 1:nrow(Lox.data)) { # generating new grid
 
     click <- 0
 
@@ -72,17 +72,23 @@ if (scalar < 1) {
   x.old <- Lox.data$Xutm
   y.old <- Lox.data$Yutm
   z.old <- Lox.data$elev_ft_NG
+  z.old2 <- Lox.data$StgJan05
   x.new <- unique(temp.mat[,2])
   y.new <- unique(temp.mat[,1])
 
   options(warn = -1)
   skim <- interp(x.old, y.old, z.old, x.new, y.new, linear = F, extrap = T)
   surf <- interp2xyz(skim)
+  
+  skim2 <- interp(x.old, y.old, z.old2, x.new, y.new, linear = F, extrap = T)
+  surf2 <- interp2xyz(skim2)
   options(warn = 0)
+  
+  surf <- cbind(surf, surf2[,3])
   surf <- as.data.frame(surf)
-  colnames(surf) <- c("X", "Y", "Z")
+  colnames(surf) <- c("X", "Y", "Z", "Z2")
 
-  int.mat <- matrix(nrow = nrow(temp.mat), ncol = 3)
+  int.mat <- matrix(nrow = nrow(temp.mat), ncol = 4)
 
   for (m in 1:nrow(temp.mat)) {  
       
@@ -90,18 +96,19 @@ if (scalar < 1) {
       
       int.mat[m, 1] <- o[1, 2] # y
       int.mat[m, 2] <- o[1, 1] # x
-      int.mat[m, 3] <- o[1, 3] # Z
-
+      int.mat[m, 3] <- o[1, 3] # elev
+      int.mat[m, 4] <- o[1, 4] # stage
+      
   }
 
   int.mat <- as.data.frame(int.mat)
-  colnames(int.mat) <- c("Y", "X", "Z")
+  colnames(int.mat) <- c("Y", "X", "Zland", "Zwater")
   
   xmen <- min(int.mat$X); xmax <- max(int.mat$X)
   ymin <- min(int.mat$Y); ymax <- max(int.mat$Y)
 
-  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
-  new.mat <- matrix(nrow = nrow(int.mat), ncol = 4)
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG", "StgJan05")
+  new.mat <- matrix(nrow = nrow(int.mat), ncol = 5)
   notch <- 1
 
   for (y in seq(ymax, ymin, -grid.size*scalar)) {
@@ -116,6 +123,7 @@ if (scalar < 1) {
         new.mat[notch, 2] <- l[1, 1]
         new.mat[notch, 3] <- l[1, 2]
         new.mat[notch, 4] <- l[1, 3]
+        new.mat[notch, 5] <- l[1, 4]
         
         notch <- notch + 1
         
@@ -130,7 +138,7 @@ if (scalar < 1) {
 }
 
 
-if (scalar > 1) {    #check this for filter? 
+if (scalar > 1) {    
 
   xmen <- min(Lox.data$Xutm); xmax <- max(Lox.data$Xutm)
   ymin <- min(Lox.data$Yutm); ymax <- max(Lox.data$Yutm)
@@ -194,8 +202,8 @@ if (scalar > 1) {    #check this for filter?
   xcol <- temp.mat[,(scalar^2 + 2)]
   temp.mat <- temp.mat[,-((ncol(temp.mat)-1):ncol(temp.mat))]
 
-  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
-  new.mat <- matrix(nrow = nrow(temp.mat), ncol = 4)
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG", "StgJan05")
+  new.mat <- matrix(nrow = nrow(temp.mat), ncol = 5)
 
   for (b in 1:nrow(temp.mat)) {
 
@@ -203,6 +211,7 @@ if (scalar > 1) {    #check this for filter?
     new.mat[b, 2] <- ycol[b]
     new.mat[b, 3] <- xcol[b]
     new.mat[b, 4] <- mean(Lox.data$elev_ft_NG[temp.mat[b,]], na.rm = T)
+    new.mat[b, 5] <- mean(Lox.data$StgJan05[temp.mat[b,]], na.rm = T)
 
   }
 
@@ -213,66 +222,66 @@ if (scalar > 1) {    #check this for filter?
 
 if (scalar == 1) { 
 
-  new.mat <- Lox.data[,1:4]
+  new.mat <- Lox.data[,c(1:4, 8)]
 
 }
 
-#write.table(new.mat, file = paste("NEW_DATA_MATRIX_NAME_3200m", ".csv", sep = ""),
-#  sep = ",", row.names = F, col.names = T)
+write.table(new.mat, file = paste("NEW_DATA_MATRIX_NAME_50m", ".csv", sep = ""),
+  sep = ",", row.names = F, col.names = T)
 
 tock <- Sys.time()
 runtime <- tock - tick
 print(runtime)
 print(Sys.time())
 
-tick <- Sys.time()
-adj <- matrix(nrow = 8, ncol = nrow(new.mat))
-new.mat <- as.data.frame(new.mat)
-
-for (g in 1:nrow(new.mat)) {
-  
-  ad <- matrix(nrow = 8, ncol = 1)
-    
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)) == 1) {
-    f1 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)
-    ad[1] <- f1$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))) == 1) {
-    f2 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))
-    ad[2] <- f2$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))) == 1) {
-    f3 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))
-    ad[3] <- f3$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
-    f4 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])
-    ad[4] <- f4$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
-    f5 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
-    ad[5] <- f5$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
-    f6 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
-    ad[6] <- f6$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
-    f7 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
-    ad[7] <- f7$GridNo
-  }
-  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
-    f8 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])
-    ad[8] <- f8$GridNo
-  }
-
-  adj[,g] <- cbind(ad)
-  
-}
-
-write.table(adj, file = paste("NEW_ADJACENCY_MATRIX_NAME_100m", ".csv", sep = ""),
- sep = ",", row.names = F, col.names = F)
-
-tock <- Sys.time()
-runtime <- tock - tick
-print(runtime)
+# tick <- Sys.time()
+# adj <- matrix(nrow = 8, ncol = nrow(new.mat))
+# new.mat <- as.data.frame(new.mat)
+# 
+# for (g in 1:nrow(new.mat)) {
+#   
+#   ad <- matrix(nrow = 8, ncol = 1)
+#     
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)) == 1) {
+#     f1 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)
+#     ad[1] <- f1$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))) == 1) {
+#     f2 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))
+#     ad[2] <- f2$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))) == 1) {
+#     f3 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))
+#     ad[3] <- f3$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
+#     f4 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])
+#     ad[4] <- f4$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+#     f5 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+#     ad[5] <- f5$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+#     f6 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+#     ad[6] <- f6$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+#     f7 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+#     ad[7] <- f7$GridNo
+#   }
+#   if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
+#     f8 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])
+#     ad[8] <- f8$GridNo
+#   }
+# 
+#   adj[,g] <- cbind(ad)
+#   
+# }
+# 
+# write.table(adj, file = paste("NEW_ADJACENCY_MATRIX_NAME_100m", ".csv", sep = ""),
+#  sep = ",", row.names = F, col.names = F)
+# 
+# tock <- Sys.time()
+# runtime <- tock - tick
+# print(runtime)
