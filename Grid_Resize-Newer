@@ -1,0 +1,278 @@
+#Approx. Times     8        4       2       1      0.5       0.25    0.125
+#Interp:         10secs   25secs  1.4min   0secs   45secs   5.3mins  1.1hrs   
+#adj:            1sec     4secs   16secs   1min    3.8min   25mins   4.5hrs          
+
+# Clear all variables before new model run #
+rm(list=ls(all=TRUE))
+tick <- Sys.time()
+print(Sys.time())
+
+## Check for necessary packages and install if necessary ##
+requiredPackages <- c('akima', 'dplyr')  #This is the list of required packages
+is.installed <- function(mypkg) is.element(mypkg, installed.packages()[,1]) #Checks if all required packages are installed
+if(any(is.installed(requiredPackages)!= TRUE)){
+ install.packages(requiredPackages[is.installed(requiredPackages) == FALSE])
+}
+library('akima'); library('dplyr')
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Lox.data <- read.csv("WCA_Model_Data.csv")  # the attributes of each grid cell
+
+grid.size <- 400 # grid spacing [m]
+scalar <- 0.25 # 0.125, 0.25, 0.5, 1, 2, 4, 8
+
+if (scalar >= 6) {
+ scalar <- 8
+} else if (scalar < 6 && scalar >= 3) {
+ scalar <- 4
+} else if (scalar < 3 && scalar >= 1.5) {
+ scalar <- 2
+} else if (scalar < 1.5 && scalar >= 0.75) {
+ scalar <- 1
+} else if (scalar < 0.75 && scalar >= 0.375) {
+ scalar <- 0.5
+} else if (scalar < 0.375 && scalar >= 0.1875) {
+ scalar <- 0.25
+} else
+ scalar <- 0.125
+
+if (scalar < 1) {
+  
+  temp.mat <- matrix(nr = nrow(Lox.data)*(scalar^-2), nc = 2)
+  
+  c <- vector(mode = "numeric", length = 1/scalar)
+  for (i in 1:(0.5/scalar)) {
+    c[i] <- 1 + 2*(i - 1)
+    c[(length(c) - i + 1)] <- -c[i]
+  }
+  
+  for (f in 1:nrow(Lox.data)) {
+
+    click <- 0
+
+    for (iy in c) {
+
+      y <- Lox.data$Yutm[f] + 0.5*scalar*grid.size*iy
+
+      for (ix in c) {
+
+        x <- Lox.data$Xutm[f] + 0.5*scalar*grid.size*ix
+
+        click <- click + 1
+
+        temp.mat[(scalar^-2)*(f - 1) + click, 1] <- y
+        temp.mat[(scalar^-2)*(f - 1) + click, 2] <- x
+
+      }
+
+    }
+
+  }
+
+  x.old <- Lox.data$Xutm
+  y.old <- Lox.data$Yutm
+  z.old <- Lox.data$elev_ft_NG
+  x.new <- unique(temp.mat[,2])
+  y.new <- unique(temp.mat[,1])
+
+  options(warn = -1)
+  skim <- interp(x.old, y.old, z.old, x.new, y.new, linear = F, extrap = T)
+  surf <- interp2xyz(skim)
+  options(warn = 0)
+  surf <- as.data.frame(surf)
+  colnames(surf) <- c("X", "Y", "Z")
+
+  int.mat <- matrix(nrow = nrow(temp.mat), ncol = 3)
+
+  for (m in 1:nrow(temp.mat)) {  
+      
+      o <- filter(surf, Y == temp.mat[m, 1] & X == temp.mat[m, 2])
+      
+      int.mat[m, 1] <- o[1, 2] # y
+      int.mat[m, 2] <- o[1, 1] # x
+      int.mat[m, 3] <- o[1, 3] # Z
+
+  }
+
+  int.mat <- as.data.frame(int.mat)
+  colnames(int.mat) <- c("Y", "X", "Z")
+  
+  xmen <- min(int.mat$X); xmax <- max(int.mat$X)
+  ymin <- min(int.mat$Y); ymax <- max(int.mat$Y)
+
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
+  new.mat <- matrix(nrow = nrow(int.mat), ncol = 4)
+  notch <- 1
+
+  for (y in seq(ymax, ymin, -grid.size*scalar)) {
+    
+    for (x in seq(xmen, xmax, grid.size*scalar)) {
+      
+      if (nrow(filter(int.mat, Y == y & X == x)) == 1) {
+        
+        l <- filter(int.mat, Y == y & X == x)
+        
+        new.mat[notch, 1] <- notch
+        new.mat[notch, 2] <- l[1, 1]
+        new.mat[notch, 3] <- l[1, 2]
+        new.mat[notch, 4] <- l[1, 3]
+        
+        notch <- notch + 1
+        
+      }
+      
+    }
+    
+  }
+  
+  colnames(new.mat) <- heads
+
+}
+
+
+if (scalar > 1) {    #check this for filter? 
+
+  xmen <- min(Lox.data$Xutm); xmax <- max(Lox.data$Xutm)
+  ymin <- min(Lox.data$Yutm); ymax <- max(Lox.data$Yutm)
+  temp.mat <- mat.or.vec(nr = nrow(Lox.data)/2, nc = scalar^2 + 2)
+  r.index <- 1
+  c.index <- 1
+
+  for (y in seq(ymax, ymin, -grid.size*scalar)) {
+
+    for (x in seq(xmen, xmax, grid.size*scalar)) {
+
+      for (r in 1:nrow(Lox.data)) {
+
+        if (Lox.data$Yutm[r] %in% ((y - grid.size*(scalar - 1)):y) &&
+            Lox.data$Xutm[r] %in% (x:(x + grid.size*(scalar - 1)))) {
+
+          temp.mat[r.index, c.index] <- Lox.data$GridNo[r]
+
+          if (temp.mat[r.index, (scalar^2 + 1)] == 0) {
+            temp.mat[r.index, (scalar^2 + 1)] <- mean((y - grid.size*(scalar - 1)), y)
+          }
+          if (temp.mat[r.index, (scalar^2 + 2)] == 0) {
+            temp.mat[r.index, (scalar^2 + 2)] <- mean(x, (x + grid.size*(scalar - 1)))
+          }
+
+          c.index <- c.index + 1
+
+        } # for this potential grid cell
+
+      } # check every Lox data point to see if it fits
+
+      r.index <- r.index + 1; c.index <- 1
+
+    } # run through grid cells from W to E
+
+  } # run through grid cells from N to S
+
+  j <- 1
+  rmv <- NULL
+
+  for (i in 1:nrow(temp.mat)) {
+
+    if (mean(temp.mat[i,]) == 0) {
+
+      rmv[j] <- i
+      j <- j + 1
+
+    }
+
+  }
+
+  for (i in 1:length(rmv)) {
+
+    temp.mat <- temp.mat[-(rmv[i]-i+1),]
+
+  }
+
+  temp.mat[temp.mat == 0] <- NA
+
+  ycol <- temp.mat[,(scalar^2 + 1)]
+  xcol <- temp.mat[,(scalar^2 + 2)]
+  temp.mat <- temp.mat[,-((ncol(temp.mat)-1):ncol(temp.mat))]
+
+  heads <- c("GridNo", "Yutm", "Xutm", "elev_ft_NG")
+  new.mat <- matrix(nrow = nrow(temp.mat), ncol = 4)
+
+  for (b in 1:nrow(temp.mat)) {
+
+    new.mat[b, 1] <- b
+    new.mat[b, 2] <- ycol[b]
+    new.mat[b, 3] <- xcol[b]
+    new.mat[b, 4] <- mean(Lox.data$elev_ft_NG[temp.mat[b,]], na.rm = T)
+
+  }
+
+  colnames(new.mat) <- heads
+
+} 
+
+
+if (scalar == 1) { 
+
+  new.mat <- Lox.data[,1:4]
+
+}
+
+#write.table(new.mat, file = paste("NEW_DATA_MATRIX_NAME_3200m", ".csv", sep = ""),
+#  sep = ",", row.names = F, col.names = T)
+
+tock <- Sys.time()
+runtime <- tock - tick
+print(runtime)
+print(Sys.time())
+
+tick <- Sys.time()
+adj <- matrix(nrow = 8, ncol = nrow(new.mat))
+new.mat <- as.data.frame(new.mat)
+
+for (g in 1:nrow(new.mat)) {
+  
+  ad <- matrix(nrow = 8, ncol = 1)
+    
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)) == 1) {
+    f1 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g] + grid.size*scalar)
+    ad[1] <- f1$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))) == 1) {
+    f2 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] + grid.size*scalar))
+    ad[2] <- f2$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))) == 1) {
+    f3 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & (Xutm == new.mat$Xutm[g] + grid.size*scalar))
+    ad[3] <- f3$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
+    f4 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == new.mat$Xutm[g])
+    ad[4] <- f4$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+    f5 <- filter(new.mat, Yutm == (new.mat$Yutm[g] - grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+    ad[5] <- f5$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+    f6 <- filter(new.mat, Yutm == new.mat$Yutm[g] & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+    ad[6] <- f6$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))) == 1) {
+    f7 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == (new.mat$Xutm[g] - grid.size*scalar))
+    ad[7] <- f7$GridNo
+  }
+  if (nrow(filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])) == 1) {
+    f8 <- filter(new.mat, Yutm == (new.mat$Yutm[g] + grid.size*scalar) & Xutm == new.mat$Xutm[g])
+    ad[8] <- f8$GridNo
+  }
+
+  adj[,g] <- cbind(ad)
+  
+}
+
+write.table(adj, file = paste("NEW_ADJACENCY_MATRIX_NAME_100m", ".csv", sep = ""),
+ sep = ",", row.names = F, col.names = F)
+
+tock <- Sys.time()
+runtime <- tock - tick
+print(runtime)
